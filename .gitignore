@@ -1,0 +1,9 @@
+
+node_modules/
+
+
+.env
+
+# קבצי מערכת הפעלה מיותרים
+.DS_Store
+Thumbs.db

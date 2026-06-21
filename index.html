@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מערכת לניהול דיווחי נזקים</title>
+    <style>
+        :root {
+            --primary-color: #3b82f6;
+            --bg-color: #f1f5f9;
+            --card-bg: #ffffff;
+            --border-color: #cbd5e1;
+            --text-main: #0f172a;
+            --text-light: #64748b;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: flex-start;
+        }
+        .panel {
+            background: var(--card-bg);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            flex: 1;
+            min-width: 320px;
+        }
+        h2 {
+            margin-top: 0;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 12px;
+            color: var(--primary-color);
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background-color: #2563eb;
+        }
+        .report-item {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        .report-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        
+        .status-ממתין-לאימות { background-color: #fef08a; color: #854d0e; }
+        .status-בטיפול { background-color: #bfdbfe; color: #1e40af; }
+        .status-טופל { background-color: #bbf7d0; color: #166534; }
+        
+        #detailsPanel { display: none; }
+        .details-row { margin-bottom: 10px; }
+        .details-row strong { color: var(--text-light); }
+    </style>
+</head>
+<body>
+
+    <div class="panel">
+        <h2>יצירת דיווח חדש</h2>
+        <form id="createForm">
+            <div class="form-group">
+                <label>שם המדווח:</label>
+                <input type="text" id="reporterName" required>
+            </div>
+            <div class="form-group">
+                <label>כתובת:</label>
+                <input type="text" id="address" required>
+            </div>
+            <div class="form-group">
+                <label>סוג נזק:</label>
+                <input type="text" id="damageType" required>
+            </div>
+            <div class="form-group">
+                <label>תיאור:</label>
+                <textarea id="description" rows="4" required></textarea>
+            </div>
+            <button type="submit">שלח דיווח</button>
+        </form>
+    </div>
+
+    <div class="panel">
+        <h2>רשימת דיווחים</h2>
+        <div id="reportsList">
+            </div>
+    </div>
+
+    <div class="panel" id="detailsPanel">
+        <h2>
+            פרטי דיווח
+            <button onclick="closeDetails()" style="width: auto; float: left; padding: 6px 12px; background: #ef4444;">סגור</button>
+        </h2>
+        <div id="reportDetails"></div>
+        
+        <div class="form-group" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+            <label>עדכון סטטוס מערכת:</label>
+            <select id="statusSelect">
+                </select>
+            <button onclick="updateStatus()" style="margin-top: 12px;">שמור שינויים</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000';
+        let selectedReportId = null;
+
+        function getStatusClass(status) {
+            return status ? status.replace(/\s+/g, '-') : '';
+        }
+
+        async function loadReports() {
+            try {
+                const response = await fetch(`${API_BASE}/reports`);
+                const reports = await response.json();
+                const listEl = document.getElementById('reportsList');
+                listEl.innerHTML = '';
+                
+                if (reports.length === 0) {
+                    listEl.innerHTML = '<p style="color:#64748b;">אין דיווחים כרגע.</p>';
+                }
+
+                reports.forEach(report => {
+                    const div = document.createElement('div');
+                    const statusClass = getStatusClass(report.status);
+                    div.className = 'report-item';
+                    div.onclick = () => showReportDetails(report.id);
+                    div.innerHTML = `
+                        <div style="font-weight: bold; font-size: 1.1em; margin-bottom: 4px;">${report.damageType}</div>
+                        <div style="color: #64748b; font-size: 0.9em; margin-bottom: 8px;">${report.address} | מדווח: ${report.reporterName}</div>
+                        <span class="status-badge status-${statusClass}">${report.status}</span>
+                    `;
+                    listEl.appendChild(div);
+                });
+            } catch (error) {
+                console.error("שגיאה בטעינת הדיווחים. ודא שהשרת פועל ברקע.", error);
+            }
+        }
+
+        document.getElementById('createForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const payload = {
+                reporterName: document.getElementById('reporterName').value,
+                address: document.getElementById('address').value,
+                damageType: document.getElementById('damageType').value,
+                description: document.getElementById('description').value
+            };
+            
+            await fetch(`${API_BASE}/reports`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            e.target.reset(); 
+            loadReports(); 
+        });
+
+        async function showReportDetails(id) {
+            const response = await fetch(`${API_BASE}/reports/${id}`);
+            const report = await response.json();
+            selectedReportId = id;
+            const statusClass = getStatusClass(report.status);
+            
+            document.getElementById('reportDetails').innerHTML = `
+                <div class="details-row"><strong>מזהה פניה:</strong> #${report.id}</div>
+                <div class="details-row"><strong>שם המדווח:</strong> ${report.reporterName}</div>
+                <div class="details-row"><strong>כתובת:</strong> ${report.address}</div>
+                <div class="details-row"><strong>סוג נזק:</strong> ${report.damageType}</div>
+                <div class="details-row"><strong>תיאור:</strong> ${report.description}</div>
+                <div class="details-row"><strong>סטטוס נוכחי:</strong> <span class="status-badge status-${statusClass}">${report.status}</span></div>
+            `;
+            
+            // עדכון דינמי של הסטטוסים האפשריים לבחירה על סמך הסטטוס הנוכחי
+            const selectEl = document.getElementById('statusSelect');
+            selectEl.innerHTML = ''; // ניקוי האפשרויות הישנות
+            
+            if (report.status === 'ממתין לאימות') {
+                // אם הסטטוס הנוכחי הוא "ממתין לאימות", מציגים רק אפשרויות להתקדמות
+                selectEl.innerHTML = `
+                    <option value="בטיפול">בטיפול</option>
+                    <option value="טופל">טופל</option>
+                `;
+            } else if (report.status === 'בטיפול') {
+                // אם הוא כבר בטיפול, ניתן להעביר רק ל"טופל"
+                selectEl.innerHTML = `
+                    <option value="בטיפול" selected>בטיפול</option>
+                    <option value="טופל">טופל</option>
+                `;
+            } else {
+                // אם הוא כבר טופל, משאירים רק את הסטטוס הנוכחי (או מאפשרים להחזיר לטיפול במידת הצורך)
+                selectEl.innerHTML = `
+                    <option value="בטיפול">בטיפול</option>
+                    <option value="טופל" selected>טופל</option>
+                `;
+            }
+            
+            document.getElementById('detailsPanel').style.display = 'block';
+        }
+
+        function closeDetails() {
+            document.getElementById('detailsPanel').style.display = 'none';
+            selectedReportId = null;
+        }
+
+        async function updateStatus() {
+            if (!selectedReportId) return;
+            const newStatus = document.getElementById('statusSelect').value;
+            
+            await fetch(`${API_BASE}/reports/${selectedReportId}/status`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            });
+            
+            loadReports(); 
+            showReportDetails(selectedReportId); 
+        }
+
+        loadReports();
+    </script>
+</body>
+</html>
