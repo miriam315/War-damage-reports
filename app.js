@@ -1,103 +1,166 @@
-const express = require('express');
-const path = require('path');
-const fs = require('fs'); // רכיב לעבודה עם קבצים
-const app = express();
+const API_BASE = 'http://localhost:3000';
+let allReports = []; 
+let selectedReportId = null;
 
-const FILE_PATH = path.join(__dirname, 'reports.json');
-
-// פונקציית עזר לקריאת הדיווחים מהקובץ
-function readReportsFromFile() {
-    try {
-        if (!fs.existsSync(FILE_PATH)) {
-            // אם הקובץ לא קיים, ניצור אותו עם מערך ריק
-            fs.writeFileSync(FILE_PATH, JSON.stringify([], null, 2));
-            return [];
-        }
-        const data = fs.readFileSync(FILE_PATH, 'utf8');
-        return JSON.parse(data);
-    } catch (error) {
-        console.error("שגיאה בקריאת הקובץ, מחזיר מערך ריק", error);
-        return [];
-    }
-}
-
-// פונקציית עזר לשמירת הדיווחים לקובץ
-function writeReportsToFile(reports) {
-    try {
-        fs.writeFileSync(FILE_PATH, JSON.stringify(reports, null, 2));
-    } catch (error) {
-        console.error("שגיאה בכתיבה לקובץ", error);
-    }
-}
-
-// הגדרת CORS לאפשר עבודה מקובץ HTML מקומי
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
-
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-// GET /reports - שליפת כל הדיווחים מהקובץ
-app.get('/reports', (req, res) => {
-    const reports = readReportsFromFile();
-    res.json(reports);
-});
-
-// POST /reports - יצירת דיווח חדש עם חותמת זמן
-app.post('/reports', (req, res) => {
-    const { reporterName, address, damageType, description } = req.body;
-    const reports = readReportsFromFile();
+// פונקציה למעבר בין לשוניות (Tabs)
+function switchTab(tabId) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     
-    // מציאת ה-ID הגבוה ביותר כדי להמשיך ממנו
-    const maxId = reports.reduce((max, r) => r.id > max ? r.id : max, 0);
+    document.getElementById(tabId).classList.add('active');
+    
+    const btn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick').includes(tabId));
+    if(btn) btn.classList.add('active');
 
-    const newReport = {
-        id: maxId + 1,
-        reporterName,
-        address,
-        damageType,
-        description,
-        status: 'ממתין לאימות',
-        createdAt: new Date().toISOString() // הוספת תאריך ושעה אוטומטיים
+    if (tabId === 'manage-tab') {
+        loadReports();
+    }
+}
+
+function getStatusClass(status) {
+    return status ? status.replace(/\s+/g, '-') : '';
+}
+
+function updateDashboardCounters(reports) {
+    document.getElementById('count-all').innerText = reports.length;
+    document.getElementById('count-pending').innerText = reports.filter(r => r.status === 'ממתין לאימות').length;
+    document.getElementById('count-progress').innerText = reports.filter(r => r.status === 'בטיפול').length;
+    document.getElementById('count-done').innerText = reports.filter(r => r.status === 'טופל').length;
+}
+
+async function loadReports() {
+    try {
+        const response = await fetch(`${API_BASE}/reports`);
+        allReports = await response.json();
+        
+        updateDashboardCounters(allReports);
+        filterReports(); 
+    } catch (error) {
+        console.error("שגיאה בתקשורת עם השרת", error);
+    }
+}
+
+function filterReports() {
+    const searchVal = document.getElementById('searchInput').value.toLowerCase();
+    const statusFilter = document.getElementById('filterStatus').value;
+    const listEl = document.getElementById('reportsList');
+    listEl.innerHTML = '';
+
+    const filtered = allReports.filter(report => {
+        const matchesStatus = (statusFilter === 'ALL' || report.status === statusFilter);
+        const matchesSearch = (
+            report.reporterName.toLowerCase().includes(searchVal) ||
+            report.address.toLowerCase().includes(searchVal) ||
+            report.damageType.toLowerCase().includes(searchVal) ||
+            report.description.toLowerCase().includes(searchVal)
+        );
+        return matchesStatus && matchesSearch;
+    });
+
+    if (filtered.length === 0) {
+        listEl.innerHTML = '<p style="color:var(--text-light); text-align:center; padding:20px;">לא נמצאו דיווחים מתאימים.</p>';
+        return;
+    }
+
+    filtered.forEach(report => {
+        const div = document.createElement('div');
+        const statusClass = getStatusClass(report.status);
+        const dateStr = report.createdAt ? new Date(report.createdAt).toLocaleDateString('he-IL') : 'אין תאריך';
+        
+        div.className = `report-item ${selectedReportId === report.id ? 'active' : ''}`;
+        div.onclick = () => showReportDetails(report.id);
+        div.innerHTML = `
+            <span class="timestamp">${dateStr}</span>
+            <div style="font-weight: bold; font-size: 1.05em; margin-bottom: 4px;">${report.damageType}</div>
+            <div style="color: var(--text-light); font-size: 0.9em; margin-bottom: 4px;">${report.address}</div>
+            <div style="font-size: 0.85em;">מדווח: ${report.reporterName}</div>
+            <span class="status-badge status-${statusClass}">${report.status}</span>
+        `;
+        listEl.appendChild(div);
+    });
+}
+
+// שליחת הטופס
+document.getElementById('createForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+        reporterName: document.getElementById('reporterName').value,
+        address: document.getElementById('address').value,
+        damageType: document.getElementById('damageType').value,
+        description: document.getElementById('description').value
     };
     
-    reports.push(newReport);
-    writeReportsToFile(reports); // שמירה לקובץ
-    res.status(201).json(newReport);
+    await fetch(`${API_BASE}/reports`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    
+    e.target.reset(); 
+    alert('הדיווח נשלח בהצלחה ונקלט במערכת!');
+    switchTab('manage-tab'); 
 });
 
-// GET /reports/{id}
-app.get('/reports/:id', (req, res) => {
-    const reports = readReportsFromFile();
-    const report = reports.find(r => r.id === parseInt(req.params.id));
-    if (!report) return res.status(404).json({ error: 'Report not found' });
-    res.json(report);
-});
-
-// PATCH /reports/{id}/status
-app.patch('/reports/:id/status', (req, res) => {
-    const { status } = req.body;
-    const reports = readReportsFromFile();
-    const report = reports.find(r => r.id === parseInt(req.params.id));
+async function showReportDetails(id) {
+    const response = await fetch(`${API_BASE}/reports/${id}`);
+    const report = await response.json();
+    selectedReportId = id;
+    const statusClass = getStatusClass(report.status);
+    const fullTimeStr = report.createdAt ? new Date(report.createdAt).toLocaleString('he-IL') : 'לא ידוע';
     
-    if (!report) return res.status(404).json({ error: 'Report not found' });
+    document.getElementById('reportDetails').innerHTML = `
+        <div class="details-row"><strong>מזהה פניה:</strong> #${report.id}</div>
+        <div class="details-row"><strong>תאריך דיווח:</strong> ${fullTimeStr}</div>
+        <div class="details-row"><strong>שם המדווח:</strong> ${report.reporterName}</div>
+        <div class="details-row"><strong>כתובת:</strong> ${report.address}</div>
+        <div class="details-row"><strong>סוג נזק:</strong> ${report.damageType}</div>
+        <div class="details-row"><strong>תיאור נזק:</strong> <p class="details-description-box">${report.description}</p></div>
+        <div class="details-row"><strong>סטטוס נוכחי:</strong> <span class="status-badge status-${statusClass}">${report.status}</span></div>
+    `;
     
-    const allowedStatuses = ['ממתין לאימות', 'בטיפול', 'טופל'];
-    if (allowedStatuses.includes(status)) {
-        report.status = status;
-        writeReportsToFile(reports); // שמירת השינוי לקובץ
-        res.json(report);
+    const selectEl = document.getElementById('statusSelect');
+    selectEl.innerHTML = '';
+    
+    if (report.status === 'ממתין לאימות') {
+        selectEl.innerHTML = `
+            <option value="בטיפול">העבר לסטטוס: בטיפול</option>
+            <option value="טופל">העבר לסטטוס: טופל</option>
+        `;
+    } else if (report.status === 'בטיפול') {
+        selectEl.innerHTML = `
+            <option value="בטיפול" selected>בטיפול (ללא שינוי)</option>
+            <option value="טופל">העבר לסטטוס: טופל</option>
+        `;
     } else {
-        res.status(400).json({ error: 'Invalid status' });
+        selectEl.innerHTML = `
+            <option value="בטיפול">החזר לטיפול חוזר</option>
+            <option value="טופל" selected>טופל (סגור)</option>
+        `;
     }
-});
+    
+    document.getElementById('detailsPanel').style.display = 'block';
+    filterReports(); 
+}
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`Server is running on http://localhost:${PORT}`));
+function closeDetails() {
+    document.getElementById('detailsPanel').style.display = 'none';
+    selectedReportId = null;
+    filterReports();
+}
+
+async function updateStatus() {
+    if (!selectedReportId) return;
+    const newStatus = document.getElementById('statusSelect').value;
+    
+    await fetch(`${API_BASE}/reports/${selectedReportId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+    });
+    
+    await loadReports(); 
+    showReportDetails(selectedReportId); 
+}
+
+// טעינה ראשונית
+loadReports();
